@@ -10,7 +10,7 @@ requests will be redirected to some URI (like this: /you_are_blocked.html).
 
 Requirements: 
 
- 1. Apache 1.3.x with mod_perl 1.2x enabled 
+ 1. Apache 1.3.x (2.x) with mod_perl 1.2x (2.x) enabled 
  2. IPC::Shareable perl module version 0.60 by BSUGARS. Probably it
     should work with other versions, but I did not test.
 
@@ -24,7 +24,12 @@ Installation:
 Apache configuration process:
 
  1. Add directives to httpd.conf below directives LoadModule and AddModule:
-    PerlModule Apache::AuthChecker
+    <IfDefine MODPERL2>
+        PerlLoadModule Apache::AuthChecker
+    </IfDefine>
+    <IfDefine !MODPERL2>
+        PerlModule Apache::AuthChecker
+    </IfDefine>
     PerlAuthCheckerMaxUsers 1450           
     PerlSecondsToExpire     3600           
 

@@ -8,4 +8,7 @@ Revision history for Perl extension Apache::AuthChecker.
         - Shared memory locks shrinked in size. Default settings 
           are revised. Shared memory size is configurable.
           
+0.20 Wed May 28 2003
+        - Ported to mod_perl2. Some parts are polished.
+
           

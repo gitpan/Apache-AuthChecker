@@ -4,17 +4,65 @@
 
 package Apache::AuthChecker;
 
-use Apache::ModuleConfig();
+$VERSION = 0.20;
+
+use mod_perl;
+use constant MP2 => ($mod_perl::VERSION >= 1.99);
+
 use DynaLoader();
-use Apache::Constants ':common';
 use IPC::Shareable;
 use IPC::SysV qw(IPC_RMID);
-use vars qw(%DB);
-use vars qw($VERSION);
-use Symbol;
-use strict;
 
-$VERSION = '0.11';
+if (MP2) { 
+    require Symbol;
+    require Apache::RequestRec;
+    require Apache::Connection;
+    require Apache::Log;
+    require Apache::SubRequest;
+
+    require Apache::Access;
+    require Apache::RequestUtil;
+    require Apache::Const;
+    require Apache::Access;
+    require Apache::CmdParms ;
+    require Apache::Module ;
+
+    @APACHE_MODULE_COMMANDS = (
+            {
+            name         => 'PerlAuthCheckerMaxUsers',
+            func         => __PACKAGE__ . '::PerlAuthCheckerMaxUsers',
+            req_override => Apache::OR_ALL,
+            args_how     => Apache::ITERATE,
+            errmsg       => 'PerlAuthCheckerMaxUsers number',
+            },
+            {
+            name         => 'PerlSecondsToExpire',
+            func         => __PACKAGE__ . '::PerlSecondsToExpire',
+            req_override => Apache::OR_ALL,
+            args_how     => Apache::ITERATE,
+            errmsg       => 'PerlSecondsToExpire secs',
+            },
+    
+    );
+
+} else {
+    require Apache::ModuleConfig;
+    require Apache::Constants;
+}
+
+
+use vars qw(%DB);
+
+# Yes, I know about existence of Apache::Const(ants) with friends.
+# But I can't spend all my time chasing various perl/mod_perl 
+# configurations/versions in free project.
+# That's why I put in code some not-at-all-correctnesses like this one,
+# to be compatible even with Perl 5.005:
+my $OK = 0;
+my $AUTH_REQUIRED = 401;
+my $REDIRECT = 302;
+
+
 
 if ($ENV{MOD_PERL}) {
     no strict;
@@ -22,12 +70,17 @@ if ($ENV{MOD_PERL}) {
     __PACKAGE__->bootstrap($VERSION);
 }
 
-my $debug = 0;
+
+sub get_config {
+      Apache::Module->get_config('Apache::AuthChecker', @_);
+}
+
+my $debug = 1;
 my $ipc_key = 0x27071975;
 my $bytes_per_record = 45;
 
 sub handler {
-    my ($r) = @_;
+    my $r = shift;
     my $res;
     my $sent_pw;
     my $rc;
@@ -35,26 +88,43 @@ sub handler {
     return undef unless defined($r);
 
     my ($res, $sent_pw) = $r->get_basic_auth_pw;
-    return $res if $res != OK;
-    my $user = $r->connection->user;
+    return $res if $res != $OK;
+    my $user = (MP2) ? $r->user : $r->connection->user;
     my $remote_ip = $r->connection->remote_ip;
     my $ignore_this_request = 0;
     my $cur_time = time();
 
     my $passwd_file = $r->dir_config('AuthUserFile');
     my $max_failed_attempts = $r->dir_config('MaxFailedAttempts') || 10;
-    my $time_to_expire = 3600;
+
+    my $time_to_expire;
+    my $mem_size;
+    my $default_time_to_expire = 3600;
+    my $default_mem_size = 65535;
+
+
+    # Fetch custom directives values
+    if (MP2) {
+        $s = $r->server;
+        $dir_cfg = get_config($s, $r->per_dir_config);
+        $time_to_expire = $dir_cfg->{'AuthCheckerSecondsToExpire'} || 
+            $default_time_to_expire;
+        $mem_size = $dir_cfg->{'AuthCheckerMemSize'} || 
+            $default_mem_size;
+    } else {
+        my $cfg = Apache::ModuleConfig->get($r);
+        $time_to_expire = $cfg->{AuthCheckerSecondsToExpire} ||
+            $default_time_to_expire;
+        $mem_size = $cfg->{AuthCheckerMemSize} || 
+            $default_mem_size
+    }
     
+
     my ($failed_attempts, $last_access);
-    
+
+
     unless (defined %DB) {
         #Init stuff here
-        my $mem_size = 65535;
-        if (my $cfg = Apache::ModuleConfig->get($r)) {
-            $mem_size = $cfg->{AuthCheckerMemSize} 
-                if ($cfg->{AuthCheckerMemSize});
-        }
-        
         $r->log_error("AuthChecker started pid: $$ tie memory $mem_size...")
             if ($debug);
         tie %DB, 'IPC::Shareable', $ipc_key, 
@@ -69,10 +139,6 @@ sub handler {
         
     tied(%DB)->shlock;
 
-    if (my $cfg = Apache::ModuleConfig->get($r)) {
-        $time_to_expire = $cfg->{AuthCheckerSecondsToExpire} 
-            if ($cfg->{AuthCheckerMemSize});
-    }
 
     #Expire old hash records
     if (!defined($DB{0})) {
@@ -106,7 +172,6 @@ sub handler {
         $r->log_error("IP: $remote_ip not found in DB.")
             if ($debug);
     }
-    tied(%DB)->shunlock;
     
 
     if (!$ignore_this_request) {
@@ -114,8 +179,9 @@ sub handler {
         $rc = open(P, $passwd_file);
         if (!$rc) {
             $r->note_basic_auth_failure;
-            $r->log_reason("Can't open file", $passwd_file);
-            return AUTH_REQUIRED;
+            $r->log_error("Can't open file", $passwd_file);
+            tied(%DB)->shunlock;
+            return $AUTH_REQUIRED;
         };
 
         my $i;
@@ -132,7 +198,8 @@ sub handler {
             if ($saved_pw ne crypt($sent_pw,$saved_pw)) {
                 last;
             } else {
-                return OK;
+                tied(%DB)->shunlock;
+                return $OK;
             }
         }
         close(P);
@@ -146,25 +213,27 @@ sub handler {
     $last_access = time();
     
     
-    # Yes, I know: another process probably modified this
-    # data. The worst thing may happen is lost attempt(s) or expire,
-    # but lock is held considerably less and overall stability
-    # is better.
     my $val = "$failed_attempts:$last_access";
-    tied(%DB)->shlock;
     $DB{$remote_ip} = $val;
     tied(%DB)->shunlock;
 
-    $r->note_basic_auth_failure;
     $r->log_error("Authorization for $user IP: $remote_ip failed. Attempts: $failed_attempts");  
 
     if ($ignore_this_request) {    
-      my $uri = $r->dir_config('RedirectURI') || "/";
-      $r->internal_redirect_handler($uri);
-      return OK;
-   } else {
-     return AUTH_REQUIRED;
-   }
+        my $uri = $r->dir_config('RedirectURI') || "/";
+        $r->internal_redirect_handler($uri);
+        return $REDIRECT;
+    } else {
+        my $i = $REDIRECT;
+        $r->log_error("AUTH1: $i");
+        $i = $AUTH_REQUIRED;
+        $r->log_error("AUTH2: $i");
+        $i = $OK;
+        $r->log_error("AUTH3: $i");
+
+        $r->note_basic_auth_failure;
+        return $AUTH_REQUIRED;
+    }
 }
 
 sub PerlAuthCheckerMaxUsers ($$$) {
@@ -198,6 +267,10 @@ __END__
 
 Apache::AuthChecker - mod_perl based authentication module used to prevent brute force attacks via HTTP authorization.
 
+=head1 SYNOPSIS
+
+See README section.
+
 =head1 README
 
 Apache::AuthChecker - mod_perl based authentication module used to prevent
@@ -222,7 +295,12 @@ Installation:
 Apache configuration process:
 
  1. Add directives to httpd.conf below directives LoadModule and AddModule:
-    PerlModule Apache::AuthChecker
+    <IfDefine MODPERL2>
+        PerlLoadModule Apache::AuthChecker
+    </IfDefine>
+    <IfDefine !MODPERL2>
+        PerlModule Apache::AuthChecker
+    </IfDefine>
     PerlAuthCheckerMaxUsers 1450           
     PerlSecondsToExpire     3600           
 
