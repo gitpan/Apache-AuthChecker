@@ -4,7 +4,20 @@ use Cwd;
 use Config;
 use Symbol;
 
-require mod_perl;
+eval {
+    require Apache;
+    require mod_perl;
+};
+if ($@) {
+    eval {
+	require Apache2;
+        require mod_perl;
+    };
+    if ($@) {
+        die "Can't find mod_perl installed: $@\n";
+    }
+}
+
 
 my $mp_ver = 1;
 if ($mod_perl::VERSION >= 1.99) { 
@@ -16,7 +29,6 @@ my %common_opts = (
     'VERSION_FROM'      => 'AuthChecker.pm',
     'PREREQ_PM'         => { IPC::Shareable => 0.60 },
     'DEFINE'            => ''
-
 );
 
 if ($mp_ver == 1) {
@@ -44,13 +56,28 @@ if ($mp_ver == 1) {
     ExtUtils::MakeMaker::WriteMakefile(
         'LIBS'		=> [''],
         'INC'		=> Apache::src->new->inc,
-        %common_opts,
+        %common_opts
     );
 
 } else {
-    require ModPerl::MM;
+
+eval {
+    require ModPerl::MM
+};
+if ($@) {
+    eval {
+        require Apache2::ModPerl::MM
+    };
+    if ($@) {
+        die "Can't find ModPerl::MM installed: $@\n";
+    }
+}
+
+    $extra_inc = ModPerl::MM::get_def_opt('INC')."/modules/perl";
+
     ModPerl::MM::WriteMakefile(
         %common_opts,
+	INC => ModPerl::MM::get_def_opt('INC')." ". $extra_inc
     );
 }
 

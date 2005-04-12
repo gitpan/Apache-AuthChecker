@@ -11,4 +11,8 @@ Revision history for Perl extension Apache::AuthChecker.
 0.20 Wed May 28 2003
         - Ported to mod_perl2. Some parts are polished.
 
+1.00 Sun Mar 27 2005
+        - Fixed some problems for mod_perl2 installation process
+        - Fixed some problems of backwards compatibility of mod_perl2
           
+

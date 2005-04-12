@@ -1,19 +1,38 @@
 # This package is distributed under GNU public license.
 # See file COPYING for details.
-# This is beta stage software. Use at your own risk.
 
 package Apache::AuthChecker;
 
-$VERSION = 0.20;
+$VERSION = 1.00;
 
-use mod_perl;
-use constant MP2 => ($mod_perl::VERSION >= 1.99);
 
 use DynaLoader();
 use IPC::Shareable;
 use IPC::SysV qw(IPC_RMID);
 
-if (MP2) { 
+
+
+# mod_perl2 development team has completely lost the idea of backwards
+# compatibility of different versions of mod_perl2. Not to mention
+# mod_perl1.
+# This is why I use some ugly eval's.
+
+eval {
+    require Apache;
+    require mod_perl;
+};
+if ($@) {
+    eval {
+        require Apache2;
+        require mod_perl;
+    };
+    if ($@) {
+        die "Can't find mod_perl installed: $@\n";
+    }
+}
+my $MP2 = ($mod_perl::VERSION >= 1.99) ? 1 : 0;
+
+if ($MP2) { 
     require Symbol;
     require Apache::RequestRec;
     require Apache::Connection;
@@ -44,6 +63,9 @@ if (MP2) {
             },
     
     );
+    eval {
+        Apache::Module::add(__PACKAGE__, \@APACHE_MODULE_COMMANDS);
+    };
 
 } else {
     require Apache::ModuleConfig;
@@ -72,7 +94,15 @@ if ($ENV{MOD_PERL}) {
 
 
 sub get_config {
-      Apache::Module->get_config('Apache::AuthChecker', @_);
+
+    eval {
+        Apache::Module->get_config(@_);
+    };
+    if ($@) {
+        eval {
+            Apache::Module->get_config(__PACKAGE__, @_);
+        }
+    };
 }
 
 my $debug = 1;
@@ -89,7 +119,7 @@ sub handler {
 
     my ($res, $sent_pw) = $r->get_basic_auth_pw;
     return $res if $res != $OK;
-    my $user = (MP2) ? $r->user : $r->connection->user;
+    my $user = ($MP2) ? $r->user : $r->connection->user;
     my $remote_ip = $r->connection->remote_ip;
     my $ignore_this_request = 0;
     my $cur_time = time();
@@ -104,7 +134,7 @@ sub handler {
 
 
     # Fetch custom directives values
-    if (MP2) {
+    if ($MP2) {
         $s = $r->server;
         $dir_cfg = get_config($s, $r->per_dir_config);
         $time_to_expire = $dir_cfg->{'AuthCheckerSecondsToExpire'} || 
@@ -281,7 +311,7 @@ requests will be redirected to some URI (like this: /you_are_blocked.html).
 
 Requirements: 
 
- 1. Apache 1.3.x with mod_perl 1.2x enabled 
+ 1. Apache 1.3.x (2.x) with mod_perl 1.2x (2.x) enabled 
  2. IPC::Shareable perl module version 0.60 by BSUGARS. Probably it
     should work with other versions, but I did not test.
 
@@ -291,11 +321,19 @@ Installation:
      perl Makefile.PL
      make && make test && make install
                                   
+!!! For RedHat users !!! 
+1. You need httpd-devel rpm package installed.
+2. If 'make' fails, try to type: 
+export LANG=en_US
+and restart installation process FROM BEGINNING.
+There is a known bug in RedHat distributions.
+
 
 Apache configuration process:
 
  1. Add directives to httpd.conf below directives LoadModule and AddModule:
     <IfDefine MODPERL2>
+	PerlModule Apache2
         PerlLoadModule Apache::AuthChecker
     </IfDefine>
     <IfDefine !MODPERL2>
@@ -326,6 +364,23 @@ Apache configuration process:
     PerlSetVar      MaxFailedAttempts 10
     PerlSetVar      RedirectURI /
     require valid-user
+    
+ Example. 
+    Your old .htaccess file looks like:
+    
+    AuthName "My secret area"
+    AuthType Basic
+    AuthUserFile /path/to/my/.htpasswd
+    require valid-user
+        
+    The new one:
+    
+    AuthName "My secret area"
+    #AuthType Basic
+    PerlAuthenHandler Apache::AuthChecker
+    PerlSetVar    AuthUserFile /path/to/my/.htpasswd
+    require valid-user
+                
 
  Parameters:
 
@@ -335,7 +390,6 @@ Apache configuration process:
  RedirectURI        - URI (not URL!) to redirect attacker then he runs out 
                       attempts limit ((OPTIONAL, default - /). 
                       For example: /you_are_blocked.html
-
 
 
 =head1 DESCRIPTION
