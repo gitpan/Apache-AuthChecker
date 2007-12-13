@@ -31,7 +31,7 @@ Apache configuration process:
 
  1. Add directives to httpd.conf below directives LoadModule and AddModule:
     <IfDefine MODPERL2>
-	PerlModule Apache2
+#	PerlModule Apache2	#Uncomment this line if you use mod_perl2 earlier than 2.0.2
         PerlLoadModule Apache::AuthChecker
     </IfDefine>
     <IfDefine !MODPERL2>

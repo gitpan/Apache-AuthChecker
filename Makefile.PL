@@ -4,17 +4,26 @@ use Cwd;
 use Config;
 use Symbol;
 
+
+# Apache 1.x
 eval {
     require Apache;
     require mod_perl;
 };
 if ($@) {
+    #mod_perl2, earlier
     eval {
 	require Apache2;
         require mod_perl;
     };
     if ($@) {
-        die "Can't find mod_perl installed: $@\n";
+        #mod_perl2, latest
+    	eval {
+        	require mod_perl2;
+    	};
+	if ($@) {
+        	die "Can't find mod_perl installed: $@\n";
+	}
     }
 }
 
@@ -23,6 +32,8 @@ my $mp_ver = 1;
 if ($mod_perl::VERSION >= 1.99) { 
     $mp_ver = 2;
 }
+
+my $more_inc = '';
 
 my %common_opts = (
     'NAME'              => 'Apache::AuthChecker',
@@ -74,6 +85,10 @@ if ($@) {
 }
 
     $extra_inc = ModPerl::MM::get_def_opt('INC')."/modules/perl";
+
+    if ($mod_perl::VERSION >= 2.000002) {
+         $extra_inc .= " -I".ModPerl::MM::build_config('apr_includedir');
+    }
 
     ModPerl::MM::WriteMakefile(
         %common_opts,

@@ -3,7 +3,7 @@
 
 package Apache::AuthChecker;
 
-$VERSION = 1.00;
+$VERSION = 1.01;
 
 
 use DynaLoader();
@@ -27,12 +27,20 @@ if ($@) {
         require mod_perl;
     };
     if ($@) {
-        die "Can't find mod_perl installed: $@\n";
+    	eval {
+            require mod_perl2;
+        };
+        if ($@) {
+            die "Can't find mod_perl installed: $@\n";
+        }
     }
 }
 my $MP2 = ($mod_perl::VERSION >= 1.99) ? 1 : 0;
+if ($mod_perl::VERSION >= 2.000002) {
+    $MP2 = 2;
+}
 
-if ($MP2) { 
+if ($MP2 == 1) { 
     require Symbol;
     require Apache::RequestRec;
     require Apache::Connection;
@@ -66,6 +74,48 @@ if ($MP2) {
     eval {
         Apache::Module::add(__PACKAGE__, \@APACHE_MODULE_COMMANDS);
     };
+    if ($@) {
+            die "Can't add module directives1: $@\n";
+    }
+
+} elsif ($MP2 == 2) { 
+    require Symbol;
+    require Apache2::RequestRec;
+    require Apache2::Connection;
+    require Apache2::Log;
+    require Apache2::SubRequest;
+
+    require Apache2::Access;
+    require Apache2::RequestUtil;
+    require Apache2::Const;
+    require Apache2::Access;
+    require Apache2::CmdParms ;
+    require Apache2::Module ;
+
+    @APACHE_MODULE_COMMANDS = (
+            {
+            name         => 'PerlAuthCheckerMaxUsers',
+            func         => __PACKAGE__ . '::PerlAuthCheckerMaxUsers',
+            req_override => Apache2::Const::OR_ALL,
+            args_how     => Apache2::Const::ITERATE,
+            errmsg       => 'PerlAuthCheckerMaxUsers number',
+            },
+            {
+            name         => 'PerlSecondsToExpire',
+            func         => __PACKAGE__ . '::PerlSecondsToExpire',
+            req_override => Apache2::Const::OR_ALL,
+            args_how     => Apache2::Const::ITERATE,
+            errmsg       => 'PerlSecondsToExpire secs',
+            },
+    
+    );
+    eval {
+        Apache2::Module::add(__PACKAGE__, \@APACHE_MODULE_COMMANDS);
+    };
+    if ($@) {
+            die "Can't add module directives2: $@\n";
+    }
+
 
 } else {
     require Apache::ModuleConfig;
